@@ -26,6 +26,7 @@ TIMEZONE = 'US/Eastern'
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize SQLite database
 def create_connection(db_file):
@@ -34,7 +35,7 @@ def create_connection(db_file):
     try:
         conn = sqlite3.connect(db_file)
     except Error as e:
-        logging.error(f"Error creating connection to database: {e}")
+        logger.error(f"Error creating connection to database: {e}")
     return conn
 
 def create_table(conn):
@@ -48,7 +49,7 @@ def create_table(conn):
                     )''')
         conn.commit()
     except Error as e:
-        logging.error(f"Error creating table: {e}")
+        logger.error(f"Error creating table: {e}")
 
 conn = create_connection("wallets.db")
 create_table(conn)
@@ -57,9 +58,11 @@ last_transactions = {}
 last_transaction_counts = {}
 
 async def start(update: Update, context: CallbackContext) -> None:
+    logger.info("Received /start command")
     await help_command(update, context)
 
 async def help_command(update: Update, context: CallbackContext) -> None:
+    logger.info("Received /help command")
     help_text = (
         "Welcome! Here are the available commands:\n"
         "/start - Display this help message\n"
@@ -113,10 +116,10 @@ async def track_wallet(update: Update, context: CallbackContext) -> None:
         # Schedule periodic checks
         job_queue = context.job_queue
         job_queue.run_repeating(check_transactions, interval=POLLING_INTERVAL, data={'chat_id': update.message.chat_id, 'wallet_address': wallet_address})
-        logging.info(f"Scheduled job to check transactions for wallet: {wallet_address}")
+        logger.info(f"Scheduled job to check transactions for wallet: {wallet_address}")
 
     except Exception as e:
-        logging.error(f"Error in track_wallet command: {str(e)}")
+        logger.error(f"Error in track_wallet command: {str(e)}")
 
 async def delete_wallet(update: Update, context: CallbackContext) -> None:
     try:
@@ -135,7 +138,7 @@ async def delete_wallet(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"Stopped tracking wallet: {wallet_address}")
 
     except Exception as e:
-        logging.error(f"Error in delete_wallet command: {str(e)}")
+        logger.error(f"Error in delete_wallet command: {str(e)}")
 
 async def edit_wallet(update: Update, context: CallbackContext) -> None:
     try:
@@ -155,7 +158,7 @@ async def edit_wallet(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"Updated wallet from {old_wallet_address} to {new_wallet_address}")
 
     except Exception as e:
-        logging.error(f"Error in edit_wallet command: {str(e)}")
+        logger.error(f"Error in edit_wallet command: {str(e)}")
 
 async def list_wallets(update: Update, context: CallbackContext) -> None:
     try:
@@ -176,7 +179,7 @@ async def list_wallets(update: Update, context: CallbackContext) -> None:
         else:
             await update.message.reply_text("You are not tracking any wallets.")
     except Exception as e:
-        logging.error(f"Error in list_wallets command: {str(e)}")
+        logger.error(f"Error in list_wallets command: {str(e)}")
 
 async def history(update: Update, context: CallbackContext) -> None:
     try:
@@ -193,7 +196,7 @@ async def history(update: Update, context: CallbackContext) -> None:
         else:
             await update.message.reply_text(f"No transactions found for wallet: {wallet_address}")
     except Exception as e:
-        logging.error(f"Error in history command: {str(e)}")
+        logger.error(f"Error in history command: {str(e)}")
 
 def get_wallet_balance(wallet_address: str) -> str:
     response = requests.get(f'{KASPA_API_BASE_URL}/{wallet_address}/balance')
@@ -203,6 +206,7 @@ def get_wallet_balance(wallet_address: str) -> str:
         balance_with_decimal = format_balance(balance)
         return balance_with_decimal
     else:
+        logger.error(f"Error fetching balance for wallet {wallet_address}: {response.status_code}")
         return 'Error fetching balance'
 
 def format_balance(balance: str) -> str:
@@ -216,6 +220,7 @@ def get_wallet_transactions(wallet_address: str):
     if response.status_code == 200:
         return response.json()
     else:
+        logger.error(f"Error fetching transactions for wallet {wallet_address}: {response.status_code}")
         return []
 
 def get_transaction_count(wallet_address: str) -> int:
@@ -224,6 +229,7 @@ def get_transaction_count(wallet_address: str) -> int:
         data = response.json()
         return data.get('total', 0)  # Ensure we use the correct key
     else:
+        logger.error(f"Error fetching transaction count for wallet {wallet_address}: {response.status_code}")
         return 0
 
 def format_transactions(transactions):
@@ -233,7 +239,7 @@ def format_transactions(transactions):
         try:
             time = datetime.fromtimestamp(tx['block_time'] / 1000, tz=timezone.utc).astimezone(pytz.timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
-            logging.error(f"Error converting time for transaction {tx['transaction_id']}: {str(e)}")
+            logger.error(f"Error converting time for transaction {tx['transaction_id']}: {str(e)}")
             time = 'Invalid timestamp'
         formatted_transactions += (
             f"Transaction ID: {tx['transaction_id']}\n"
@@ -247,30 +253,31 @@ def check_transactions(context: CallbackContext) -> None:
     chat_id = job.data['chat_id']
     wallet_address = job.data['wallet_address']
 
-    logging.info(f"Checking transactions for wallet: {wallet_address}")
+    logger.info(f"Checking transactions for wallet: {wallet_address}")
 
     # Fetch the current transaction count
     current_transaction_count = get_transaction_count(wallet_address)
-    logging.info(f"Current transaction count for wallet {wallet_address}: {current_transaction_count}")
+    logger.info(f"Current transaction count for wallet {wallet_address}: {current_transaction_count}")
 
     # Compare with the last known transaction count
     if wallet_address in last_transaction_counts and current_transaction_count != last_transaction_counts[wallet_address]:
-        logging.info(f"Transaction count changed for wallet {wallet_address}")
+        logger.info(f"Transaction count changed for wallet {wallet_address}")
         # Transaction count has changed, fetch the latest transactions
         current_transactions = get_wallet_transactions(wallet_address)
         new_transactions = current_transactions[:1]  # Get the most recent transaction
 
         if new_transactions:
-            logging.info(f"New transaction detected for wallet {wallet_address}: {new_transactions}")
+            logger.info(f"New transaction detected for wallet {wallet_address}: {new_transactions}")
             context.bot.send_message(chat_id=chat_id, text=f'New transaction detected:\n{format_transactions(new_transactions)}')
             last_transactions[wallet_address] = current_transactions
 
         last_transaction_counts[wallet_address] = current_transaction_count
     else:
-        logging.info(f"No new transactions for wallet {wallet_address}")
+        logger.info(f"No new transactions for wallet {wallet_address}")
         last_transaction_counts[wallet_address] = current_transaction_count
 
 def main() -> None:
+    logger.info("Starting bot")
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler('start', start))
@@ -282,6 +289,7 @@ def main() -> None:
     application.add_handler(CommandHandler('history', history))
 
     application.run_polling()
+    logger.info("Bot started with polling")
 
 if __name__ == '__main__':
     main()
