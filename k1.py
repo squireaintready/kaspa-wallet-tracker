@@ -19,6 +19,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TOKEN = TELEGRAM_TOKEN
 # Replace with the Kaspa API base URL
 KASPA_API_BASE_URL = 'https://api.kaspa.org/addresses'
+KASPA_PRICE_API_URL = 'https://api.kaspa.org/info/price'
 # Polling interval in seconds
 POLLING_INTERVAL = 60
 # Eastern Timezone
@@ -103,7 +104,9 @@ async def track_wallet(update: Update, context: CallbackContext) -> None:
 
         # Fetch initial balance and transactions
         balance = get_wallet_balance(wallet_address)
-        await update.message.reply_text(f'Current balance: {balance}')
+        price = get_kas_price()
+        balance_in_usd = float(balance) * price
+        await update.message.reply_text(f'Current balance: {balance} KAS (~${balance_in_usd:.2f})')
 
         transactions = get_wallet_transactions(wallet_address)
         last_transactions[wallet_address] = transactions
@@ -170,10 +173,12 @@ async def list_wallets(update: Update, context: CallbackContext) -> None:
 
         if wallets:
             wallet_list = []
+            price = get_kas_price()
             for wallet in wallets:
                 wallet_address = wallet[0]
                 balance = get_wallet_balance(wallet_address)
-                wallet_list.append(f"{wallet_address} (Balance: {balance})")
+                balance_in_usd = float(balance) * price
+                wallet_list.append(f"{wallet_address} (Balance: {balance} KAS (~${balance_in_usd:.2f}))")
 
             await update.message.reply_text(f"Tracked wallets:\n" + "\n".join(wallet_list))
         else:
@@ -209,6 +214,15 @@ def get_wallet_balance(wallet_address: str) -> str:
         logger.error(f"Error fetching balance for wallet {wallet_address}: {response.status_code}")
         return 'Error fetching balance'
 
+def get_kas_price() -> float:
+    response = requests.get(KASPA_PRICE_API_URL)
+    if response.status_code == 200:
+        data = response.json()
+        return data.get('price', 0.0)
+    else:
+        logger.error(f"Error fetching KAS price: {response.status_code}")
+        return 0.0
+
 def format_balance(balance: str) -> str:
     balance = int(balance)
     balance_with_decimal = f"{balance / 1_0000_0000:.8f}"
@@ -234,17 +248,19 @@ def get_transaction_count(wallet_address: str) -> int:
 
 def format_transactions(transactions):
     formatted_transactions = ""
-    for tx in transactions:
+    price = get_kas_price()
+    for i, tx in enumerate(transactions):
         amount = format_balance(sum(output['amount'] for output in tx['outputs']))
+        amount_in_usd = float(amount) * price
         try:
             time = datetime.fromtimestamp(tx['block_time'] / 1000, tz=timezone.utc).astimezone(pytz.timezone(TIMEZONE)).strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
             logger.error(f"Error converting time for transaction {tx['transaction_id']}: {str(e)}")
             time = 'Invalid timestamp'
         formatted_transactions += (
-            f"Transaction ID: {tx['transaction_id']}\n"
-            f"Amount: {amount}\n"
-            f"Time: {time}\n\n"
+            f"{i+1}. Transaction ID: {tx['transaction_id']}\n"
+            f"   Amount: {amount} KAS (~${amount_in_usd:.2f})\n"
+            f"   Time: {time}\n\n"
         )
     return formatted_transactions
 
